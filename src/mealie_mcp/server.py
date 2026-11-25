@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 
+from .annotations import hints_for
 from .client import MealieClient
 from .config import Config, ConfigError
 from .tools import admin, cookbooks, feedback, library, mealplan, recipes, shopping
@@ -99,9 +100,20 @@ class SendResultsOnce(Middleware):
     structuredContent in the first place.
     """
 
+    def __init__(self, read_only: bool = False) -> None:
+        self.read_only = read_only
+
     async def on_list_tools(self, context, call_next):
         tools = await call_next(context)
-        return [tool.model_copy(update={"output_schema": None}) for tool in tools]
+        return [
+            tool.model_copy(
+                update={
+                    "output_schema": None,
+                    "annotations": hints_for(tool.name, self.read_only),
+                }
+            )
+            for tool in tools
+        ]
 
     async def on_call_tool(self, context, call_next):
         result = await call_next(context)
@@ -132,7 +144,7 @@ def build_server(config: Config) -> FastMCP:
             _client = None
 
     mcp = FastMCP(name="mealie", lifespan=lifespan)
-    mcp.add_middleware(SendResultsOnce())
+    mcp.add_middleware(SendResultsOnce(config.read_only))
     for module in (recipes, mealplan, cookbooks, shopping, feedback, library, admin):
         module.register(mcp, get_client, config.read_only)
     return mcp

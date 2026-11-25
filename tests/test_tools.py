@@ -2710,3 +2710,57 @@ async def test_guard_not_fired_on_an_empty_recipe():
         await client.call_tool("update_recipe", {"slug": "roast", "ingredients": []})
 
     assert patch.called
+
+
+async def _listed(cfg: Config) -> dict:
+    async with Client(build_server(cfg)) as client:
+        return {tool.name: tool for tool in await client.list_tools()}
+
+
+async def test_every_tool_has_annotations():
+    for cfg in (config(), config(read_only=True)):
+        for name, tool in (await _listed(cfg)).items():
+            assert tool.annotations is not None, f"{name} is unlabelled"
+
+
+def test_annotation_table_covers_exactly_the_tool_names():
+    from mealie_mcp.annotations import TOOL_HINTS
+
+    assert set(TOOL_HINTS) == READ_TOOLS | WRITE_TOOLS
+
+
+async def test_read_tools_are_read_only_and_write_tools_are_not():
+    tools = await _listed(config())
+    for name in READ_TOOLS - {"manage_taxonomy"}:
+        assert tools[name].annotations.read_only_hint is True, name
+    for name in WRITE_TOOLS:
+        assert tools[name].annotations.read_only_hint is False, name
+    assert tools["manage_taxonomy"].annotations.read_only_hint is False
+    ro = await _listed(config(read_only=True))
+    assert ro["manage_taxonomy"].annotations.read_only_hint is True
+
+
+async def test_deletes_and_overwrites_are_destructive_and_creates_are_not():
+    tools = await _listed(config())
+    for name in tools:
+        if name.startswith("delete_"):
+            assert tools[name].annotations.destructive_hint is True, name
+    for name in ("update_recipe", "set_recipe_image", "bulk_tag_recipes", "update_cookbook"):
+        assert tools[name].annotations.destructive_hint is True, name
+    for name in ("create_recipe", "add_shopping_item", "import_recipe_from_url"):
+        assert tools[name].annotations.destructive_hint is False, name
+    assert tools["create_recipe"].annotations.idempotent_hint is False
+    assert tools["import_recipe_from_url"].annotations.open_world_hint is True
+
+
+@respx.mock
+async def test_annotating_does_not_bring_back_structured_output():
+    respx.get(f"{BASE}/api/recipes/roast").mock(
+        return_value=httpx.Response(200, json={"slug": "roast", "name": "Roast", "lastMade": None})
+    )
+    tools = await _listed(config())
+    assert all(tool.output_schema is None for tool in tools.values())
+
+    async with Client(build_server(config())) as client:
+        result = await client.call_tool("get_recipe", {"slug": "roast"})
+    assert result.structured_content is None
