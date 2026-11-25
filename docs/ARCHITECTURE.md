@@ -121,6 +121,17 @@ without an entry. Reads are `readOnlyHint`; overwrites and every delete are
 URL. `manage_taxonomy` is read-only in read-only mode and destructive otherwise.
 Output schemas stay stripped (invariant 4); annotations do not bring them back.
 
+## Server instructions
+
+`src/mealie_mcp/instructions.py` holds the text sent in the MCP `initialize`
+handshake, so it reaches every client with nothing to install (a skill would
+reach only clients that load it). It is paid for on every session, so it holds
+only what the tool signatures do not say and models get wrong, found by running
+every tool against a live Mealie: foods must be registered for `suggest_recipes`
+to match; `max_total_minutes` needs stored durations; lists must be read before
+they are edited; deletes need confirmation. Read-only servers get the read half
+only. A test caps the length and checks the key rules are present.
+
 ## Lossless list updates
 
 `get_recipe` shows ingredients as display strings and steps as `title: text`,

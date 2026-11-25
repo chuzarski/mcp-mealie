@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`upload_recipe_image`, `import_recipe_from_images`) are not registered over
   HTTP.
 - A non-root `Dockerfile` for the HTTP server, with a health check.
+- Server instructions sent in the MCP handshake: how to edit lists safely, when
+  to confirm, and the limits of food and duration search. Read-only servers
+  send the read half only.
 - Every tool carries MCP `readOnlyHint` / `destructiveHint` / `idempotentHint` /
   `openWorldHint` annotations so clients can ask before overwrites and deletes.
 - `update_recipe(confirm_replace_all=…)`: emptying a list, or cutting more than

@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse, Response
 from .annotations import hints_for
 from .client import MealieClient
 from .config import Config, ConfigError
+from .instructions import instructions_for
 from .tools import admin, cookbooks, feedback, library, mealplan, recipes, shopping
 
 log = logging.getLogger("mealie_mcp")
@@ -145,7 +146,7 @@ def build_server(config: Config) -> FastMCP:
             await _client.aclose()
             _client = None
 
-    mcp = FastMCP(name="mealie", lifespan=lifespan)
+    mcp = FastMCP(name="mealie", instructions=instructions_for(config.read_only), lifespan=lifespan)
     mcp.add_middleware(SendResultsOnce(config.read_only))
     recipes.register(
         mcp, get_client, config.read_only, allow_local_files=config.transport == "stdio"

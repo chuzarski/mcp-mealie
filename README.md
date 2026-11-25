@@ -141,7 +141,9 @@ take precedence over the file.
 
 With `MEALIE_READ_ONLY=true`, seventeen read tools remain.
 
-Every tool carries MCP hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+The server also sends short usage instructions in the MCP handshake (read before
+editing a list, confirm before deleting, register foods for ingredient search), so
+clients need no extra setup. Every tool carries MCP hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
 `openWorldHint`) so a client can ask before it overwrites or deletes. They live
 in one table, `src/mealie_mcp/annotations.py`.
 

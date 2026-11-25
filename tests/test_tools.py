@@ -2822,3 +2822,37 @@ async def test_foreign_origin_is_refused():
         )
 
     assert refused.status_code == 403
+
+
+async def _instructions(cfg: Config) -> str:
+    async with Client(build_server(cfg)) as client:
+        return client.instructions or ""
+
+
+async def test_server_instructions_reach_the_client_and_stay_short():
+    text = await _instructions(config())
+
+    assert "get_recipe" in text and "manage_taxonomy" in text
+    assert len(text) <= 2600, "instructions are paid for on every session; keep them short"
+
+
+async def test_instructions_cover_the_mistakes_models_make():
+    text = await _instructions(config())
+
+    for needle in (
+        "pass the whole list back",  # edits must start from get_recipe
+        "confirm with the user",  # destructive calls
+        "twice",  # delete_recipe / delete_shopping_list
+        "partially completed",  # do not repeat a half-done call
+        "max_total_minutes",  # needs stored durations
+        "end_date",  # week entries are exactly 6 days
+    ):
+        assert needle in text, needle
+
+
+async def test_read_only_instructions_leave_out_the_write_advice():
+    text = await _instructions(config(read_only=True))
+
+    assert "get_recipe" in text
+    for needle in ("confirm with the user", "delete_recipe", "partially completed"):
+        assert needle not in text, needle
