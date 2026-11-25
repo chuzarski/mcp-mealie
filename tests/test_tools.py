@@ -2764,3 +2764,61 @@ async def test_annotating_does_not_bring_back_structured_output():
     async with Client(build_server(config())) as client:
         result = await client.call_tool("get_recipe", {"slug": "roast"})
     assert result.structured_content is None
+
+
+PATH_TOOLS = {"upload_recipe_image", "import_recipe_from_images"}
+
+
+async def test_http_mode_drops_the_tools_that_read_server_files():
+    http = await tool_names(config(transport="http"))
+    stdio = await tool_names(config())
+
+    assert not http & PATH_TOOLS
+    assert http == (READ_TOOLS | WRITE_TOOLS) - PATH_TOOLS
+    assert stdio >= PATH_TOOLS
+
+
+async def test_http_read_only_leaves_only_the_read_tools():
+    names = await tool_names(config(transport="http", read_only=True))
+
+    assert names == READ_TOOLS
+
+
+def _http_client(cfg: Config) -> httpx.AsyncClient:
+    app = build_server(cfg).http_app(
+        path="/mcp", host_origin_protection=True, allowed_hosts=list(cfg.allowed_hosts)
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://mcp.test")
+
+
+async def test_health_reports_liveness_and_nothing_else():
+    cfg = config(transport="http", allowed_hosts=("mcp.test",))
+    async with _http_client(cfg) as http:
+        response = await http.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert "tok" not in response.text
+    assert BASE not in response.text
+
+
+async def test_unexpected_host_is_refused_and_listed_host_is_served():
+    cfg = config(transport="http", allowed_hosts=("mcp.test",))
+    async with _http_client(cfg) as http:
+        refused = await http.get("/health", headers={"host": "evil.example"})
+        served = await http.get("/health", headers={"host": "mcp.test"})
+        local = await http.get("/health", headers={"host": "localhost:8000"})
+
+    assert refused.status_code == 421
+    assert served.status_code == 200
+    assert local.status_code == 200  # the container health check
+
+
+async def test_foreign_origin_is_refused():
+    cfg = config(transport="http", allowed_hosts=("mcp.test",))
+    async with _http_client(cfg) as http:
+        refused = await http.get(
+            "/health", headers={"host": "mcp.test", "origin": "https://evil.example"}
+        )
+
+    assert refused.status_code == 403

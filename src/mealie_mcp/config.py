@@ -45,6 +45,31 @@ def _parse_positive_int(name: str, default: int) -> int:
     return value
 
 
+TRANSPORTS = ("stdio", "http")
+
+
+def _parse_transport(default: str) -> str:
+    raw = (os.environ.get("MEALIE_MCP_TRANSPORT") or "").strip().lower()
+    if not raw:
+        return default
+    if raw not in TRANSPORTS:
+        raise ConfigError(
+            f"MEALIE_MCP_TRANSPORT must be one of: {', '.join(TRANSPORTS)} (got {raw!r})"
+        )
+    return raw
+
+
+def _parse_port(default: int) -> int:
+    value = _parse_positive_int("MEALIE_MCP_PORT", default)
+    if value > 65535:
+        raise ConfigError(f"MEALIE_MCP_PORT must be 1-65535 (got {value})")
+    return value
+
+
+def _parse_list(name: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in (os.environ.get(name) or "").split(",") if part.strip())
+
+
 @dataclass(frozen=True)
 class Config:
     """Validated runtime configuration, normally built via from_env().
@@ -57,6 +82,11 @@ class Config:
         log_level: Python logging level name, e.g. "INFO" or "DEBUG".
         max_concurrency: How many Mealie requests this client runs at once,
             shared across every concurrent MCP tool call.
+        transport: "stdio" (default) or "http" (streamable HTTP at /mcp).
+        host: Interface the HTTP server binds to.
+        port: Port the HTTP server binds to.
+        allowed_hosts: Extra Host header values the HTTP server accepts, on top
+            of localhost; anything else is refused with 421.
     """
 
     url: str
@@ -65,6 +95,10 @@ class Config:
     verify_ssl: bool = True
     log_level: str = "INFO"
     max_concurrency: int = DEFAULT_CONCURRENCY
+    transport: str = "stdio"
+    host: str = "127.0.0.1"
+    port: int = 8000
+    allowed_hosts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> Config:
@@ -79,7 +113,8 @@ class Config:
         Raises:
             ConfigError: If MEALIE_URL or MEALIE_API_TOKEN is missing or
                 malformed, a boolean variable has an unrecognized value, or
-                MEALIE_MAX_CONCURRENCY is not a positive integer.
+                MEALIE_MAX_CONCURRENCY is not a positive integer, or the
+                transport or port is invalid.
         """
         # usecwd: without it dotenv searches upward from this module's directory
         # (inside site-packages for an installed copy), not the user's cwd.
@@ -104,4 +139,8 @@ class Config:
             verify_ssl=_parse_bool("MEALIE_VERIFY_SSL", True),
             log_level=(os.environ.get("MEALIE_LOG_LEVEL") or "INFO").strip().upper(),
             max_concurrency=_parse_positive_int("MEALIE_MAX_CONCURRENCY", DEFAULT_CONCURRENCY),
+            transport=_parse_transport("stdio"),
+            host=(os.environ.get("MEALIE_MCP_HOST") or "127.0.0.1").strip(),
+            port=_parse_port(8000),
+            allowed_hosts=_parse_list("MEALIE_MCP_ALLOWED_HOSTS"),
         )

@@ -274,7 +274,26 @@ async def _read_created_recipe(client: MealieClient, slug: str) -> dict:
         ) from exc
 
 
-def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
+def _unregistered(fn: Callable) -> Callable:
+    """Stand-in for @mcp.tool: defines the function and registers nothing."""
+    return fn
+
+
+def register(
+    mcp: FastMCP, get_client: GetClient, read_only: bool, allow_local_files: bool = True
+) -> None:
+    """Register the recipe tools.
+
+    Args:
+        mcp: The server to register on.
+        get_client: Returns the live Mealie client.
+        read_only: When True only the read tools are registered.
+        allow_local_files: When False the two tools that read image files by
+            path from this machine are not registered; over HTTP they would let
+            a remote caller probe the server's filesystem.
+    """
+    local_file_tool = mcp.tool if allow_local_files else _unregistered
+
     @mcp.tool
     async def search_recipes(
         query: str | None = None,
@@ -659,7 +678,7 @@ def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
         )
         return {"slug": slug, "image_url": url}
 
-    @mcp.tool
+    @local_file_tool
     async def upload_recipe_image(slug: str, path: str) -> dict:
         """Set a recipe's image from an image file on this machine.
 
@@ -812,7 +831,7 @@ def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
         )
         return shape.recipe_summary(duplicated or {})
 
-    @mcp.tool
+    @local_file_tool
     async def import_recipe_from_images(paths: list[str], language: str | None = None) -> dict:
         """Import a recipe by reading it off one or more photos.
 

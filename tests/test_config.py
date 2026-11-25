@@ -18,6 +18,10 @@ def clean_env(monkeypatch):
         "MEALIE_VERIFY_SSL",
         "MEALIE_LOG_LEVEL",
         "MEALIE_MAX_CONCURRENCY",
+        "MEALIE_MCP_TRANSPORT",
+        "MEALIE_MCP_HOST",
+        "MEALIE_MCP_PORT",
+        "MEALIE_MCP_ALLOWED_HOSTS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -123,3 +127,47 @@ def test_the_real_environment_wins_over_the_dotenv_file(monkeypatch, tmp_path):
     set_env(monkeypatch)
 
     assert Config.from_env().url == "https://mealie.test"
+
+
+def test_transport_defaults_to_stdio_on_loopback(monkeypatch):
+    set_env(monkeypatch)
+
+    config = Config.from_env()
+
+    assert config.transport == "stdio"
+    assert config.host == "127.0.0.1"
+    assert config.port == 8000
+    assert config.allowed_hosts == ()
+
+
+def test_http_transport_settings_are_parsed(monkeypatch):
+    set_env(
+        monkeypatch,
+        MEALIE_MCP_TRANSPORT=" HTTP ",
+        MEALIE_MCP_HOST="0.0.0.0",
+        MEALIE_MCP_PORT="9100",
+        MEALIE_MCP_ALLOWED_HOSTS="mcp.example.org, mealie-mcp:9100 ,,",
+    )
+
+    config = Config.from_env()
+
+    assert config.transport == "http"
+    assert config.host == "0.0.0.0"
+    assert config.port == 9100
+    assert config.allowed_hosts == ("mcp.example.org", "mealie-mcp:9100")
+
+
+@pytest.mark.parametrize("value", ["sse", "websocket", "1"])
+def test_unknown_transport_is_an_error(monkeypatch, value):
+    set_env(monkeypatch, MEALIE_MCP_TRANSPORT=value)
+
+    with pytest.raises(ConfigError, match="MEALIE_MCP_TRANSPORT must be one of"):
+        Config.from_env()
+
+
+@pytest.mark.parametrize("value", ["0", "65536", "-1", "http"])
+def test_bad_port_is_an_error(monkeypatch, value):
+    set_env(monkeypatch, MEALIE_MCP_PORT=value)
+
+    with pytest.raises(ConfigError, match="MEALIE_MCP_PORT"):
+        Config.from_env()

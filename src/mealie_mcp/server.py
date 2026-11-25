@@ -11,6 +11,8 @@ import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from .annotations import hints_for
 from .client import MealieClient
@@ -145,8 +147,17 @@ def build_server(config: Config) -> FastMCP:
 
     mcp = FastMCP(name="mealie", lifespan=lifespan)
     mcp.add_middleware(SendResultsOnce(config.read_only))
-    for module in (recipes, mealplan, cookbooks, shopping, feedback, library, admin):
+    recipes.register(
+        mcp, get_client, config.read_only, allow_local_files=config.transport == "stdio"
+    )
+    for module in (mealplan, cookbooks, shopping, feedback, library, admin):
         module.register(mcp, get_client, config.read_only)
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(_request: Request) -> Response:
+        # Liveness only: it must stay cheap and say nothing about configuration.
+        return JSONResponse({"status": "ok"})
+
     return mcp
 
 
@@ -176,7 +187,21 @@ def main() -> None:
         print(f"mcp-mealie: cannot reach Mealie at {config.url}: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
-    build_server(config).run()
+    server = build_server(config)
+    if config.transport == "http":
+        log.info("serving streamable HTTP on %s:%s/mcp", config.host, config.port)
+        server.run(
+            transport="http",
+            host=config.host,
+            port=config.port,
+            path="/mcp",
+            show_banner=False,
+            # FastMCP leaves its Host/Origin guard off unless asked.
+            host_origin_protection=True,
+            allowed_hosts=list(config.allowed_hosts),
+        )
+    else:
+        server.run()
 
 
 def _make_client(config: Config) -> MealieClient:
