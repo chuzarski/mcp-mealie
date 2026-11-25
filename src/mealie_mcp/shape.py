@@ -90,6 +90,46 @@ def instruction(step: dict) -> str:
     return f"{title}: {text}" if title else text
 
 
+def align_existing(
+    incoming: list[Any], existing: list[dict], display: Callable[[dict], str]
+) -> list[int | None]:
+    """Pair each incoming line with the existing item it was read from.
+
+    A caller edits a recipe by sending back the lines get_recipe showed it, so a
+    line equal to an existing item's display text IS that item: reusing the raw
+    object keeps its IDs, step titles and ingredient links. Same position wins;
+    otherwise the first unused existing item with identical text, so a reorder
+    or a repeated line still pairs each existing item at most once.
+
+    Args:
+        incoming: The caller's list; only strings are ever matched.
+        existing: The raw items currently on the recipe.
+        display: Renders a raw item the way the read tools show it.
+
+    Returns:
+        One entry per incoming item: an index into existing to reuse, or None
+        for a new or edited line.
+    """
+    shown = [display(item) for item in existing]
+    used: set[int] = set()
+    result: list[int | None] = [None] * len(incoming)
+
+    for i, line in enumerate(incoming):
+        if isinstance(line, str) and i < len(shown) and shown[i] == line:
+            result[i] = i
+            used.add(i)
+
+    for i, line in enumerate(incoming):
+        if result[i] is not None or not isinstance(line, str):
+            continue
+        for j, text in enumerate(shown):
+            if j not in used and text == line:
+                result[i] = j
+                used.add(j)
+                break
+    return result
+
+
 def _duration(text: str | None, seconds: Any) -> str | None:
     """A recipe time as text, from Mealie's free text or its structured seconds.
 

@@ -242,3 +242,45 @@ def test_paginated_stops_hinting_past_the_last_page_without_total_pages():
     page = {"items": [], "total": 3, "per_page": 2}
 
     assert "note" not in shape.paginated(page, shape.recipe_summary, page_number=2)
+
+
+def _show(item: dict) -> str:
+    return item["d"]
+
+
+def _items(*displays: str) -> list[dict]:
+    return [{"d": d} for d in displays]
+
+
+def test_align_same_position_reuses():
+    assert shape.align_existing(["a", "b", "c"], _items("a", "b", "c"), _show) == [0, 1, 2]
+
+
+def test_align_reordered():
+    assert shape.align_existing(["b", "a", "c"], _items("a", "b", "c"), _show) == [1, 0, 2]
+
+
+def test_align_duplicates_use_each_existing_once():
+    assert shape.align_existing(["a", "a", "a"], _items("a", "a", "b"), _show) == [0, 1, None]
+
+
+def test_align_edited_line_is_none():
+    assert shape.align_existing(["a", "B", "c"], _items("a", "b", "c"), _show) == [0, None, 2]
+
+
+def test_align_dict_items_never_reused():
+    assert shape.align_existing([{"d": "a"}, "b"], _items("a", "b"), _show) == [None, 1]
+
+
+def test_align_round_trips_what_the_shaper_shows(recipe):
+    # A titled step and a food-less ingredient: the lossy cases from the field.
+    recipe["recipeInstructions"].append({"title": "Gravy", "text": "Deglaze.", "id": "s3"})
+    recipe["recipeIngredient"].append({"note": "salt to taste", "display": "", "food": None})
+    shown = shape.recipe_detail(recipe)
+
+    assert shape.align_existing(
+        shown["ingredients"], recipe["recipeIngredient"], shape.ingredient
+    ) == list(range(len(recipe["recipeIngredient"])))
+    assert shape.align_existing(
+        shown["instructions"], recipe["recipeInstructions"], shape.instruction
+    ) == list(range(len(recipe["recipeInstructions"])))
