@@ -132,6 +132,19 @@ to match; `max_total_minutes` needs stored durations; lists must be read before
 they are edited; deletes need confirmation. Read-only servers get the read half
 only. A test caps the length and checks the key rules are present.
 
+## Times
+
+Mealie stores a recipe time as text and as `*TimeSeconds`, derives neither from
+the other, and searches (`max_total_minutes`) and, from 3.29, displays by
+seconds. A time written as text alone is therefore invisible to duration
+search. `_time_fields` in `tools/recipes.py` writes both for every time a
+caller gives (`shape.parse_duration` reads "1 hr 30 min", "90 minutes",
+"PT1H30M"; anything not read exactly stays text with no seconds), and
+recomputes `totalTimeSeconds`/`totalTime` from both times, taking the stored
+value for the one not touched. An unreadable time on an update clears the
+stale total rather than leaving a wrong one. Verified on 2.8.0, 3.25.1 and
+3.31.0: older versions ignore the seconds fields.
+
 ## Lossless list updates
 
 `get_recipe` shows ingredients as display strings and steps as `title: text`,

@@ -284,3 +284,33 @@ def test_align_round_trips_what_the_shaper_shows(recipe):
     assert shape.align_existing(
         shown["instructions"], recipe["recipeInstructions"], shape.instruction
     ) == list(range(len(recipe["recipeInstructions"])))
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("10 minutes", 600),
+        ("1 hour", 3600),
+        ("1 hr 30 min", 5400),
+        ("1h30m", 5400),
+        ("90 minutes", 5400),
+        ("1.5 hours", 5400),
+        ("PT1H30M", 5400),
+        ("45 sec", 45),
+        ("2 days", 172800),
+        ("  15 Minutes ", 900),
+    ],
+)
+def test_parse_duration_reads_the_forms_people_write(text, seconds):
+    assert shape.parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize("text", [None, "", "a good while", "about 10 minutes", "10", "0 minutes"])
+def test_parse_duration_refuses_what_it_cannot_read_exactly(text):
+    assert shape.parse_duration(text) is None
+
+
+def test_format_duration_matches_what_the_read_tools_show():
+    assert shape.format_duration(2100) == "35 minutes"
+    assert shape.format_duration(4500) == "1 hour 15 minutes"
+    assert shape.format_duration(3600) == "1 hour"

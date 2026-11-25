@@ -2292,7 +2292,7 @@ async def test_get_recipe_skips_the_household_view_when_last_made_is_not_wanted(
 
 
 @respx.mock
-async def test_update_recipe_writes_cook_time_where_mealie_shows_it_and_clears_old_seconds():
+async def test_update_recipe_writes_cook_time_where_mealie_shows_it_and_replaces_old_seconds():
     # Mealie's "Cook Time" is performTime, and 3.29+ prefers a stored duration
     # over text, so new text next to the old seconds would never show.
     respx.get(f"{BASE}/api/recipes/roast").mock(
@@ -2312,9 +2312,11 @@ async def test_update_recipe_writes_cook_time_where_mealie_shows_it_and_clears_o
 
     assert json.loads(patch.calls.last.request.content) == {
         "prepTime": "15 minutes",
-        "prepTimeSeconds": None,
+        "prepTimeSeconds": 900,
         "performTime": "1 hour",
-        "performTimeSeconds": None,
+        "performTimeSeconds": 3600,
+        "totalTime": "1 hour 15 minutes",
+        "totalTimeSeconds": 4500,
     }
 
 
@@ -2856,3 +2858,91 @@ async def test_read_only_instructions_leave_out_the_write_advice():
     assert "get_recipe" in text
     for needle in ("confirm with the user", "delete_recipe", "partially completed"):
         assert needle not in text, needle
+
+
+async def _create_body(args: dict) -> dict:
+    respx.post(f"{BASE}/api/recipes").mock(return_value=httpx.Response(201, json="stew"))
+    patch = respx.patch(f"{BASE}/api/recipes/stew").mock(return_value=httpx.Response(200, json={}))
+    respx.get(f"{BASE}/api/recipes/stew").mock(
+        return_value=httpx.Response(200, json={"slug": "stew", "name": "Stew", "lastMade": None})
+    )
+    async with Client(build_server(config())) as client:
+        await client.call_tool("create_recipe", {"name": "Stew", **args})
+    return json.loads(patch.calls.last.request.content)
+
+
+@respx.mock
+async def test_create_recipe_stores_times_as_seconds_so_duration_search_finds_them():
+    body = await _create_body({"prep_time": "10 minutes", "cook_time": "15 minutes"})
+
+    assert body["prepTimeSeconds"] == 600
+    assert body["performTimeSeconds"] == 900
+    assert body["totalTimeSeconds"] == 1500
+    assert body["totalTime"] == "25 minutes"
+
+
+@respx.mock
+async def test_create_recipe_with_one_time_totals_that_time():
+    body = await _create_body({"cook_time": "1 hour"})
+
+    assert body["totalTimeSeconds"] == 3600
+    assert "prepTimeSeconds" not in body
+
+
+@respx.mock
+async def test_create_recipe_with_an_unparseable_time_leaves_the_total_unset():
+    body = await _create_body({"prep_time": "a good while", "cook_time": "15 minutes"})
+
+    assert body["prepTime"] == "a good while"
+    assert body["performTimeSeconds"] == 900
+    assert "totalTimeSeconds" not in body
+    assert "totalTime" not in body
+
+
+async def _update_times(current: dict, args: dict) -> dict:
+    respx.get(f"{BASE}/api/recipes/roast").mock(
+        return_value=httpx.Response(200, json={"slug": "roast", **current})
+    )
+    patch = respx.patch(f"{BASE}/api/recipes/roast").mock(
+        return_value=httpx.Response(200, json={"slug": "roast"})
+    )
+    async with Client(build_server(config())) as client:
+        await client.call_tool("update_recipe", {"slug": "roast", **args})
+    return json.loads(patch.calls.last.request.content)
+
+
+@respx.mock
+async def test_update_prep_time_totals_with_the_stored_cook_seconds():
+    body = await _update_times({"performTimeSeconds": 1800}, {"prep_time": "15 minutes"})
+
+    assert body["prepTimeSeconds"] == 900
+    assert body["totalTimeSeconds"] == 2700
+    assert body["totalTime"] == "45 minutes"
+
+
+@respx.mock
+async def test_update_cook_time_totals_with_text_only_prep_on_the_recipe():
+    body = await _update_times({"prepTime": "10 minutes"}, {"cook_time": "1 hour"})
+
+    assert body["performTimeSeconds"] == 3600
+    assert body["totalTimeSeconds"] == 4200
+
+
+@respx.mock
+async def test_update_to_an_unparseable_time_clears_the_stale_seconds_and_total():
+    body = await _update_times(
+        {"performTimeSeconds": 1800, "totalTimeSeconds": 1800, "totalTime": "30 minutes"},
+        {"cook_time": "until golden"},
+    )
+
+    assert body["performTime"] == "until golden"
+    assert body["performTimeSeconds"] is None
+    assert body["totalTimeSeconds"] is None
+    assert body["totalTime"] is None
+
+
+@respx.mock
+async def test_update_that_leaves_times_alone_leaves_the_total_alone():
+    body = await _update_times({"totalTimeSeconds": 1800}, {"rating": 4})
+
+    assert not any(k.startswith(("prep", "perform", "total")) for k in body)

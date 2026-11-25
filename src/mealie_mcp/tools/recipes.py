@@ -172,6 +172,61 @@ def _check_mass_loss(kind: str, existing_count: int, new_count: int, confirm: bo
         )
 
 
+def _time_fields(prep: str | None, cook: str | None, current: dict | None = None) -> dict[str, Any]:
+    """Payload entries for the times a caller gave, kept consistent with each other.
+
+    Mealie stores a time as text and as seconds, derives neither from the
+    other, and searches and (3.29+) displays by seconds, so text alone is
+    invisible to max_total_minutes. Each given time therefore writes both, and
+    the total is recomputed from both times, using what is already on the
+    recipe for one the caller did not touch.
+
+    Args:
+        prep: New prep time text, or None to leave it.
+        cook: New cook time text, or None to leave it.
+        current: The recipe as stored (an update); None for a create, where an
+            unreadable time just leaves the total unset instead of clearing it.
+
+    Returns:
+        Fields to merge into the PATCH body; empty when no time was given.
+    """
+    fields: dict[str, Any] = {}
+    if prep is None and cook is None:
+        return fields
+    for text, text_key, seconds_key in (
+        (prep, "prepTime", "prepTimeSeconds"),
+        (cook, "performTime", "performTimeSeconds"),
+    ):
+        if text is not None:
+            fields[text_key] = text
+            fields[seconds_key] = shape.parse_duration(text)
+
+    total, known = 0, True
+    for text_key, seconds_key in (
+        ("prepTime", "prepTimeSeconds"),
+        ("performTime", "performTimeSeconds"),
+    ):
+        if text_key in fields:
+            given = fields[seconds_key]
+            present = bool(fields[text_key])
+        else:
+            stored = (current or {}).get(seconds_key)
+            text = (current or {}).get(text_key)
+            given = stored if isinstance(stored, int) and stored > 0 else shape.parse_duration(text)
+            present = bool(given or text)
+        if present and given is None:
+            known = False
+        total += given or 0
+
+    if known and total > 0:
+        fields["totalTimeSeconds"] = total
+        fields["totalTime"] = shape.format_duration(total)
+    elif not known and current is not None:
+        fields["totalTimeSeconds"] = None
+        fields["totalTime"] = None
+    return fields
+
+
 def _read_image(path: str) -> tuple[Path, str, bytes]:
     """Validate and read one local image file for upload.
 
@@ -490,10 +545,7 @@ def register(
                 payload["description"] = description
             if recipe_yield is not None:
                 payload["recipeYield"] = recipe_yield
-            if prep_time is not None:
-                payload["prepTime"] = prep_time
-            if cook_time is not None:
-                payload["performTime"] = cook_time
+            payload.update(_time_fields(prep_time, cook_time))
             if source_url is not None:
                 payload["orgURL"] = source_url
             if recipe_ingredient:
@@ -580,18 +632,7 @@ def register(
             payload["description"] = description
         if recipe_yield is not None:
             payload["recipeYield"] = recipe_yield
-        if prep_time is not None:
-            payload["prepTime"] = prep_time
-        if cook_time is not None:
-            payload["performTime"] = cook_time
-        # Mealie 3.29+ keeps parsed times as seconds and prefers them, so new
-        # text next to an old duration would never show. Clear the duration.
-        for text_key, seconds_key in (
-            ("prepTime", "prepTimeSeconds"),
-            ("performTime", "performTimeSeconds"),
-        ):
-            if text_key in payload and current.get(seconds_key) is not None:
-                payload[seconds_key] = None
+        payload.update(_time_fields(prep_time, cook_time, current))
         if source_url is not None:
             payload["orgURL"] = source_url
         lists: dict[str, dict[str, int]] = {}

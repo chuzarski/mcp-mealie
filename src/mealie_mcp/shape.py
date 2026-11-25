@@ -7,6 +7,7 @@ reads. This module is where that gets cut, and where the tests concentrate.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -130,6 +131,15 @@ def align_existing(
     return result
 
 
+def format_duration(seconds: int) -> str:
+    """Seconds as the text the read tools show, e.g. "1 hour 15 minutes"."""
+    hours, minutes = divmod(round(seconds / 60), 60)
+    parts = [f"{hours} hour{'s' * (hours != 1)}"] if hours else []
+    if minutes or not hours:
+        parts.append(f"{max(minutes, 1)} minute{'s' * (minutes != 1)}")
+    return " ".join(parts)
+
+
 def _duration(text: str | None, seconds: Any) -> str | None:
     """A recipe time as text, from Mealie's free text or its structured seconds.
 
@@ -138,11 +148,46 @@ def _duration(text: str | None, seconds: Any) -> str | None:
     """
     if text or not isinstance(seconds, int) or seconds <= 0:
         return text
-    hours, minutes = divmod(round(seconds / 60), 60)
-    parts = [f"{hours} hour{'s' * (hours != 1)}"] if hours else []
-    if minutes or not hours:
-        parts.append(f"{max(minutes, 1)} minute{'s' * (minutes != 1)}")
-    return " ".join(parts)
+    return format_duration(seconds)
+
+
+_UNIT_SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+_PART = r"(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])"
+_WRITTEN = re.compile(rf"(?:{_PART}[\s,]*(?:and\s+)?)+")
+_ISO = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?")
+
+
+def parse_duration(text: str | None) -> int | None:
+    """Read a written time ("1 hr 30 min", "90 minutes", "PT1H30M") as seconds.
+
+    Mealie's duration search and its 3.29+ display use stored seconds, and the
+    API does not derive them from text, so a time written as text alone is
+    invisible to both. Strict on purpose: anything not read exactly ("about
+    10 minutes", a bare "10") returns None and stays text.
+
+    Args:
+        text: A time as a person or schema.org would write it.
+
+    Returns:
+        Whole seconds, or None when the text is empty, unreadable or zero.
+    """
+    if not text:
+        return None
+    cleaned = text.strip().lower()
+    iso = _ISO.fullmatch(text.strip().upper())
+    if iso and any(iso.groups()):
+        days, hours, minutes, secs = (int(g or 0) for g in iso.groups())
+        total = days * 86400 + hours * 3600 + minutes * 60 + secs
+    elif _WRITTEN.fullmatch(cleaned):
+        total = round(
+            sum(
+                float(number) * _UNIT_SECONDS[unit[0]]
+                for number, unit in re.findall(_PART, cleaned)
+            )
+        )
+    else:
+        return None
+    return total or None
 
 
 def names(items: list[dict] | None) -> list[str]:

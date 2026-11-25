@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Times written by `create_recipe` and `update_recipe` are now stored as
+  seconds as well as text, with the total recomputed, so
+  `search_recipes(max_total_minutes=…)` finds recipes written through this
+  server. Unreadable times ("about an hour") stay text and clear a stale total.
 - `update_recipe` no longer rewrites every ingredient and step when you edit
   one: lines passed back unchanged keep their food/unit IDs, step titles and
   ingredient links; only edited lines are re-parsed.

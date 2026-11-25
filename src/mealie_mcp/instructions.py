@@ -16,7 +16,8 @@ fields=[...]; use one filtered search, or library_stats / find_duplicate_recipes
 in Mealie (manage_taxonomy resource=foods). An ingredient with no registered \
 food is plain text and will not match.
 - search_recipes(max_total_minutes=) only matches recipes with a stored \
-duration; a time kept as text does not count.
+duration; recipes whose times were set elsewhere may keep them as text and \
+will not match.
 """
 
 WRITE = """\

@@ -87,3 +87,33 @@ async def test_editing_one_line_keeps_the_rest_intact(client):
             await client.call_tool("update_recipe", {"slug": slug, "ingredients": []})
     finally:
         await client.call_tool("delete_recipe", {"slug": slug, "confirm_slug": slug})
+
+
+async def test_times_written_here_are_found_by_duration_search(client):
+    from test_live import MEALIE_VERSION
+
+    created = await client.call_tool(
+        "create_recipe",
+        {"name": "Integration Timed Stew", "prep_time": "10 minutes", "cook_time": "15 minutes"},
+    )
+    slug = data(created)["slug"]
+    try:
+        assert data(created)["total_time"] == "25 minutes"
+
+        async def found(minutes: int) -> bool:
+            result = await client.call_tool(
+                "search_recipes", {"query": "Integration Timed Stew", "max_total_minutes": minutes}
+            )
+            return any(r["slug"] == slug for r in data(result)["items"])
+
+        if MEALIE_VERSION >= (3, 29):  # the duration filter is a 3.29 feature
+            assert await found(30)
+            assert not await found(20)
+
+        updated = await client.call_tool("update_recipe", {"slug": slug, "cook_time": "2 hours"})
+        assert data(updated)["total_time"] == "2 hours 10 minutes"
+        if MEALIE_VERSION >= (3, 29):
+            assert not await found(30)
+            assert await found(180)
+    finally:
+        await client.call_tool("delete_recipe", {"slug": slug, "confirm_slug": slug})
