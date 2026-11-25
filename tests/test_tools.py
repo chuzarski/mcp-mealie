@@ -2520,3 +2520,193 @@ async def test_get_todays_meals_includes_week_long_entries():
     assert params["start_date"] == params["end_date"] == data(result)["date"]
     assert params["include_week_entries"] == "true"
     assert data(result)["items"][0]["end_date"] == "2026-11-15"
+
+
+def _raw_ingredient(ref: str, quantity: float, unit: str, food: str) -> dict:
+    return {
+        "referenceId": ref,
+        "quantity": quantity,
+        "unit": {"id": f"u-{unit}", "name": unit},
+        "food": {"id": f"f-{food}", "name": food},
+        "note": "",
+        "display": f"{quantity:g} {unit} {food}",
+        "originalText": f"{quantity:g} {unit} {food}",
+    }
+
+
+def _raw_step(sid: str, title: str, text: str, refs: list[str]) -> dict:
+    return {
+        "id": sid,
+        "title": title,
+        "text": text,
+        "ingredientReferences": [{"referenceId": r} for r in refs],
+    }
+
+
+def _mock_recipe(ingredients: list[dict], steps: list[dict]):
+    body = {
+        "id": "r1",
+        "slug": "roast",
+        "name": "Roast",
+        "recipeIngredient": ingredients,
+        "recipeInstructions": steps,
+    }
+    respx.get(f"{BASE}/api/recipes/roast").mock(return_value=httpx.Response(200, json=body))
+    return respx.patch(f"{BASE}/api/recipes/roast").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+
+
+FLOUR = _raw_ingredient("ref-a", 2, "cup", "flour")
+SUGAR = _raw_ingredient("ref-b", 1, "tbsp", "sugar")
+SALT = _raw_ingredient("ref-c", 1, "tsp", "salt")
+
+
+@respx.mock
+async def test_update_ingredients_reuses_unchanged_items_verbatim():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT], [])
+    parser = respx.post(f"{BASE}/api/parser/ingredients").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "ingredient": {
+                        "quantity": 2,
+                        "unit": {"id": "u-tbsp", "name": "tbsp"},
+                        "food": {"id": "f-sugar", "name": "sugar"},
+                    }
+                }
+            ],
+        )
+    )
+
+    async with Client(build_server(config())) as client:
+        result = await client.call_tool(
+            "update_recipe",
+            {"slug": "roast", "ingredients": ["2 cup flour", "2 tbsp sugar", "1 tsp salt"]},
+        )
+
+    sent = json.loads(patch.calls.last.request.content)["recipeIngredient"]
+    assert sent[0] == FLOUR
+    assert sent[2] == SALT
+    assert sent[1]["quantity"] == 2
+    assert sent[1]["referenceId"] not in {"ref-a", "ref-b", "ref-c"}
+    assert json.loads(parser.calls.last.request.content)["ingredients"] == ["2 tbsp sugar"]
+    assert data(result)["lists"]["ingredients"] == {"kept": 2, "rewritten": 1}
+
+
+@respx.mock
+async def test_update_instructions_keeps_titles_and_references():
+    steps = [_raw_step("s1", "Dough", "Mix.", ["ref-a"]), _raw_step("s2", "", "Bake.", [])]
+    patch = _mock_recipe([FLOUR], steps)
+
+    async with Client(build_server(config())) as client:
+        result = await client.call_tool(
+            "update_recipe",
+            {"slug": "roast", "instructions": ["Dough: Mix.", "Bake at 200C."]},
+        )
+
+    sent = json.loads(patch.calls.last.request.content)["recipeInstructions"]
+    assert sent[0] == steps[0]
+    assert sent[1] == {"title": "", "text": "Bake at 200C.", "ingredientReferences": []}
+    assert data(result)["lists"]["instructions"] == {"kept": 1, "rewritten": 1}
+
+
+@respx.mock
+async def test_update_edited_unresolved_food_goes_through_parser():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT], [])
+    respx.post(f"{BASE}/api/parser/ingredients").mock(
+        return_value=httpx.Response(
+            200, json=[{"ingredient": {"quantity": 1, "food": {"name": "saffron"}}}]
+        )
+    )
+
+    async with Client(build_server(config())) as client:
+        await client.call_tool(
+            "update_recipe",
+            {"slug": "roast", "ingredients": ["2 cup flour", "pinch saffron", "1 tsp salt"]},
+        )
+
+    sent = json.loads(patch.calls.last.request.content)["recipeIngredient"]
+    assert sent[0] == FLOUR
+    assert sent[2] == SALT
+    assert "saffron" in sent[1]["note"]
+    assert "food" not in sent[1]
+
+
+@respx.mock
+async def test_update_reordered_duplicates_pair_each_existing_item_once():
+    patch = _mock_recipe([FLOUR, FLOUR, SALT, SUGAR], [])
+
+    async with Client(build_server(config())) as client:
+        await client.call_tool(
+            "update_recipe",
+            {
+                "slug": "roast",
+                "ingredients": ["1 tbsp sugar", "2 cup flour", "2 cup flour", "1 tsp salt"],
+            },
+        )
+
+    sent = json.loads(patch.calls.last.request.content)["recipeIngredient"]
+    assert sent == [SUGAR, FLOUR, FLOUR, SALT]
+
+
+@respx.mock
+async def test_guard_refuses_emptying_a_list():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT, FLOUR, SUGAR], [])
+
+    async with Client(build_server(config())) as client:
+        with pytest.raises(ToolError, match="5 ingredients"):
+            await client.call_tool("update_recipe", {"slug": "roast", "ingredients": []})
+
+    assert not patch.called
+
+
+@respx.mock
+async def test_guard_refuses_dropping_more_than_half_of_four_or_more():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT, FLOUR], [])
+
+    async with Client(build_server(config())) as client:
+        with pytest.raises(ToolError, match="confirm_replace_all"):
+            await client.call_tool(
+                "update_recipe", {"slug": "roast", "ingredients": ["2 cup flour"]}
+            )
+        assert not patch.called
+
+        # Exactly half is not "more than half".
+        await client.call_tool(
+            "update_recipe", {"slug": "roast", "ingredients": ["2 cup flour", "1 tbsp sugar"]}
+        )
+    assert patch.called
+
+
+@respx.mock
+async def test_guard_allows_shrinking_a_short_list():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT], [])
+
+    async with Client(build_server(config())) as client:
+        await client.call_tool("update_recipe", {"slug": "roast", "ingredients": ["2 cup flour"]})
+
+    assert patch.called
+
+
+@respx.mock
+async def test_guard_bypassed_with_confirm_replace_all():
+    patch = _mock_recipe([FLOUR, SUGAR, SALT, FLOUR, SUGAR], [])
+
+    async with Client(build_server(config())) as client:
+        await client.call_tool(
+            "update_recipe", {"slug": "roast", "ingredients": [], "confirm_replace_all": True}
+        )
+
+    assert json.loads(patch.calls.last.request.content)["recipeIngredient"] == []
+
+
+@respx.mock
+async def test_guard_not_fired_on_an_empty_recipe():
+    patch = _mock_recipe([], [])
+
+    async with Client(build_server(config())) as client:
+        await client.call_tool("update_recipe", {"slug": "roast", "ingredients": []})
+
+    assert patch.called

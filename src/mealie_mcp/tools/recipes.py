@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +129,47 @@ async def _ingredient_payload(client: MealieClient, items: list[Any]) -> list[di
         else _normalize_ingredient(i)
         for i in items
     ]
+
+
+async def _merge_list(
+    incoming: list[Any],
+    existing: list[dict],
+    display: Callable[[dict], str | dict],
+    rewrite: Callable[[list[Any]], Awaitable[list[dict]]],
+) -> tuple[list[dict], int, int]:
+    """Build the list to write: raw items for unchanged lines, new ones for the rest.
+
+    Args:
+        incoming: What the caller sent, in order.
+        existing: The raw items currently on the recipe.
+        display: Renders a raw item as the read tools show it.
+        rewrite: Turns the unmatched incoming items into payload items.
+
+    Returns:
+        The full payload list, how many existing items were kept untouched,
+        and how many incoming items were rewritten.
+    """
+    matches = shape.align_existing(incoming, existing, display)
+    fresh = iter(await rewrite([i for i, m in zip(incoming, matches, strict=True) if m is None]))
+    merged = [existing[m] if m is not None else next(fresh) for m in matches]
+    kept = sum(m is not None for m in matches)
+    return merged, kept, len(incoming) - kept
+
+
+def _check_mass_loss(kind: str, existing_count: int, new_count: int, confirm: bool) -> None:
+    """Refuse an update that empties a list or cuts more than half of four or more items.
+
+    Raises:
+        ToolError: When the cut looks like a mistake and confirm is False.
+    """
+    dropped = existing_count - new_count
+    if confirm or existing_count == 0 or dropped <= 0:
+        return
+    if new_count == 0 or (existing_count >= 4 and dropped > existing_count / 2):
+        raise ToolError(
+            f"this would leave {new_count} of the recipe's {existing_count} {kind}; "
+            "pass confirm_replace_all=true to replace them anyway — nothing was written"
+        )
 
 
 def _read_image(path: str) -> tuple[Path, str, bytes]:
@@ -487,13 +528,17 @@ def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
         replace_tags: bool = False,
         replace_categories: bool = False,
         replace_tools: bool = False,
+        confirm_replace_all: bool = False,
     ) -> dict:
         """Update a recipe. Only the fields you pass are touched.
 
         Tags, categories, and tools MERGE with what is already there; pass the
         matching replace_* flag to overwrite instead. Ingredients,
         instructions, and notes always replace the existing list — read the
-        recipe first and pass the whole list back.
+        recipe first and pass the whole list back. A line you pass back
+        unchanged keeps its IDs, titles and links; an edited line is re-parsed
+        and loses its step links. Emptying a list, or cutting more than half
+        of four or more items, needs confirm_replace_all=true.
 
         Notes are {"title": ..., "text": ...} objects; a plain string becomes
         an untitled note. Rating is 0-5.
@@ -530,10 +575,30 @@ def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
                 payload[seconds_key] = None
         if source_url is not None:
             payload["orgURL"] = source_url
+        lists: dict[str, dict[str, int]] = {}
         if ingredients is not None:
-            payload["recipeIngredient"] = await _ingredient_payload(client, ingredients)
+            old_ingredients = current.get("recipeIngredient") or []
+            _check_mass_loss(
+                "ingredients", len(old_ingredients), len(ingredients), confirm_replace_all
+            )
+            payload["recipeIngredient"], kept, rewritten = await _merge_list(
+                ingredients,
+                old_ingredients,
+                shape.ingredient,
+                lambda items: _ingredient_payload(client, items),
+            )
+            lists["ingredients"] = {"kept": kept, "rewritten": rewritten}
         if instructions is not None:
-            payload["recipeInstructions"] = _instruction_payload(instructions)
+            old_steps = current.get("recipeInstructions") or []
+            _check_mass_loss("instructions", len(old_steps), len(instructions), confirm_replace_all)
+
+            async def _steps(items: list[Any]) -> list[dict]:
+                return _instruction_payload(items)
+
+            payload["recipeInstructions"], kept, rewritten = await _merge_list(
+                instructions, old_steps, shape.instruction, _steps
+            )
+            lists["instructions"] = {"kept": kept, "rewritten": rewritten}
         if notes is not None:
             payload["notes"] = _notes_payload(notes)
         if rating is not None:
@@ -575,6 +640,8 @@ def register(mcp: FastMCP, get_client: GetClient, read_only: bool) -> None:
         else:
             result = await _fetch_recipe(client, slug)
         result = _with_created(result, created_tags, created_categories, created_tools)
+        if lists:
+            result = {**result, "lists": lists}
         return {**result, "renamed_from": renamed_from} if renamed_from else result
 
     @mcp.tool

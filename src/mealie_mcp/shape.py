@@ -91,7 +91,7 @@ def instruction(step: dict) -> str:
 
 
 def align_existing(
-    incoming: list[Any], existing: list[dict], display: Callable[[dict], str]
+    incoming: list[Any], existing: list[dict], display: Callable[[dict], str | dict]
 ) -> list[int | None]:
     """Pair each incoming line with the existing item it was read from.
 
