@@ -102,6 +102,10 @@ Released versions are listed in the
 | `MEALIE_VERIFY_SSL` | — | `true` | Set false for self-signed certs (homelab only) |
 | `MEALIE_LOG_LEVEL` | — | `INFO` | Log verbosity, to stderr |
 | `MEALIE_MAX_CONCURRENCY` | — | `4` | Mealie requests in flight at once, across all tools |
+| `MEALIE_MCP_TRANSPORT` | — | `stdio` | `stdio`, or `http` to serve streamable HTTP at `/mcp` |
+| `MEALIE_MCP_HOST` | — | `127.0.0.1` | Interface to bind in `http` mode |
+| `MEALIE_MCP_PORT` | — | `8000` | Port to bind in `http` mode |
+| `MEALIE_MCP_ALLOWED_HOSTS` | — | — | Comma-separated Host header values `http` mode accepts besides localhost |
 
 Booleans accept `1/true/yes/on` and their negations. An unrecognized value is a
 startup error rather than a silent false.
@@ -136,6 +140,34 @@ take precedence over the file.
 | 🔧 **Other** | `parse_ingredients` · `manage_taxonomy` |
 
 With `MEALIE_READ_ONLY=true`, seventeen read tools remain.
+
+Every tool carries MCP hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+`openWorldHint`) so a client can ask before it overwrites or deletes. They live
+in one table, `src/mealie_mcp/annotations.py`.
+
+`update_recipe` keeps ingredients and steps you pass back unchanged exactly as
+they were (IDs, step titles, ingredient links) and re-parses only the lines you
+edit. Emptying a list, or cutting more than half of four or more items, is
+refused unless you pass `confirm_replace_all=true`.
+
+## 🌐 Running over HTTP
+
+Stdio stays the default. To serve several agents from one long-lived process,
+set `MEALIE_MCP_TRANSPORT=http`; the server then speaks streamable HTTP at
+`/mcp` and answers `/health` with `{"status":"ok"}` (liveness only; it does not
+call Mealie). The server has **no client authentication of its own**: put it
+behind a reverse proxy or gateway that checks credentials, on a private
+network.
+
+- Host/Origin checks are on. Only localhost is accepted unless you list the
+  names your proxy forwards in `MEALIE_MCP_ALLOWED_HOSTS`; anything else gets
+  `421`, a foreign `Origin` gets `403`.
+- `upload_recipe_image` and `import_recipe_from_images` read image files by path
+  from the machine running the server, so they are **not registered** over
+  HTTP; they are write tools, so read-only mode is unaffected.
+- The `Dockerfile` in the repository root builds a non-root image that serves HTTP on port
+  8000 with a health check. Pass `MEALIE_URL` and `MEALIE_API_TOKEN` at run
+  time; neither is baked in.
 
 Once connected, ask in plain language — the agent picks the tools:
 

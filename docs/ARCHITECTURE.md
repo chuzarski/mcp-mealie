@@ -76,6 +76,10 @@ boolean values are a startup error, never a silent `false`.
 | `MEALIE_VERIFY_SSL` | no | `true` | `verify_ssl` |
 | `MEALIE_LOG_LEVEL` | no | `INFO` | `log_level` |
 | `MEALIE_MAX_CONCURRENCY` | no | `4` | `max_concurrency` |
+| `MEALIE_MCP_TRANSPORT` | no | `stdio` | `transport` (`stdio` or `http`) |
+| `MEALIE_MCP_HOST` | no | `127.0.0.1` | `host` |
+| `MEALIE_MCP_PORT` | no | `8000` | `port` (1-65535) |
+| `MEALIE_MCP_ALLOWED_HOSTS` | no | — | `allowed_hosts` (comma-separated) |
 
 `main()` validates config, then probes `/api/app/about` (reachability and
 version) and `/api/users/self` (token) **before** the stdio transport starts, so
@@ -85,6 +89,50 @@ tool call failing separately.
 Logging goes to stderr only. Under stdio transport stdout *is* the protocol.
 Credentials are never logged: the token lives in an httpx header and no log
 statement formats a header, a request body, or a `Config`.
+
+## HTTP mode
+
+`MEALIE_MCP_TRANSPORT=http` runs `server.run(transport="http", path="/mcp")`
+after the same startup probe, so a bad token still exits 2 before anything
+listens. `/health` is a FastMCP custom route returning a fixed body: liveness
+only, no Mealie call, no configuration echoed.
+
+FastMCP 4 ships a Host/Origin guard but leaves it **off** by default, so
+`main()` passes `host_origin_protection=True` and `allowed_hosts`. The guard
+always accepts localhost (which the container health check uses) plus
+`MEALIE_MCP_ALLOWED_HOSTS`; other Hosts get 421, foreign Origins 403. The
+server does no client authentication: a proxy in front owns that.
+
+`upload_recipe_image` and `import_recipe_from_images` take a filesystem path
+and read it on the server. Over HTTP that would let a caller probe the server's
+disk, so `build_server` passes `allow_local_files=False` and `recipes.register`
+does not register them, by the same not-registered-rather-than-refused rule as
+read-only mode.
+
+## Tool annotations
+
+`src/mealie_mcp/annotations.py` holds one table of MCP hints for all tools;
+`SendResultsOnce.on_list_tools` applies them when tools are listed.
+`test_every_tool_has_annotations` and
+`test_annotation_table_covers_exactly_the_tool_names` fail if a tool is added
+without an entry. Reads are `readOnlyHint`; overwrites and every delete are
+`destructiveHint`; only set-style updates are `idempotentHint`;
+`openWorldHint` marks tools that make Mealie or this server fetch an outside
+URL. `manage_taxonomy` is read-only in read-only mode and destructive otherwise.
+Output schemas stay stripped (invariant 4); annotations do not bring them back.
+
+## Lossless list updates
+
+`get_recipe` shows ingredients as display strings and steps as `title: text`,
+and `update_recipe` replaces a whole list, so a caller must send those strings
+back. Re-parsing every one would regenerate food/unit IDs, `referenceId`s, drop
+step titles and ingredient links, and fold unmatched foods into notes.
+`shape.align_existing` instead pairs each incoming string with the existing
+item that displays identically (same position first, then the first unused
+match, so duplicates and reorders pair each item once); `_merge_list` writes
+the stored raw item for a match and re-parses only the rest. An edited line
+still loses its step links and IDs. `_check_mass_loss` refuses to empty a list,
+or cut more than half of four or more items, without `confirm_replace_all`.
 
 ## Read-only mode
 

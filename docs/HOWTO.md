@@ -94,7 +94,10 @@ in order of how much they repay the effort:
 `update_recipe` files it. Tags, categories and tools **merge** with what is
 already there and names that do not exist yet are created — the response says
 which were new, so read that line back before a typo becomes a permanent tag.
-Pass `replace_tags=True` to overwrite instead. If the scraper missed the
+Pass `replace_tags=True` to overwrite instead.
+When you edit a recipe's ingredients or steps, lines you pass back unchanged keep
+their IDs and links and only edited lines are re-parsed; emptying a list needs
+`confirm_replace_all=true`. If the scraper missed the
 photo, `set_recipe_image(slug, url)` fetches it from the web, and
 `upload_recipe_image(slug, path)` sends a file from the machine the server
 runs on.

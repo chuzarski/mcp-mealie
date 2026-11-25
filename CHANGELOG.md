@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Streamable HTTP transport: `MEALIE_MCP_TRANSPORT=http` serves `/mcp` and a
+  `/health` liveness route, with `MEALIE_MCP_HOST`, `MEALIE_MCP_PORT` and
+  `MEALIE_MCP_ALLOWED_HOSTS` (Host/Origin checks are on; stdio stays the
+  default). The two tools that read image files by path from the server
+  (`upload_recipe_image`, `import_recipe_from_images`) are not registered over
+  HTTP.
+- A non-root `Dockerfile` for the HTTP server, with a health check.
+- Every tool carries MCP `readOnlyHint` / `destructiveHint` / `idempotentHint` /
+  `openWorldHint` annotations so clients can ask before overwrites and deletes.
+- `update_recipe(confirm_replace_all=…)`: emptying a list, or cutting more than
+  half of four or more ingredients or steps, is refused without it.
+
+### Fixed
+
+- `update_recipe` no longer rewrites every ingredient and step when you edit
+  one: lines passed back unchanged keep their food/unit IDs, step titles and
+  ingredient links; only edited lines are re-parsed.
+
 ### Changed
 
 - The documentation site is now built with MkDocs (Material) instead of

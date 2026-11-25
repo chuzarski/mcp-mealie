@@ -21,7 +21,8 @@ src/mealie_mcp/
   config.py     MEALIE_* env vars -> frozen Config, validated at startup
   client.py     HTTP to Mealie: retries, path safety, semaphore, caches
   shape.py      pure Mealie JSON -> trimmed dicts; no I/O; heavily tested
-  server.py     FastMCP wiring: lifespan, startup probe, tool registration
+  server.py     FastMCP wiring: lifespan, startup probe, tool registration, HTTP mode
+  annotations.py  one table of MCP hints for every tool (readOnly/destructive/...)
   tools/        recipes mealplan shopping cookbooks feedback library admin
 tests/          test_shape test_client test_tools test_config test_docs
 tests/fixtures/         captured Mealie responses for the shaper tests
